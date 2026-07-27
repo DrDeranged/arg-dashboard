@@ -1,0 +1,754 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ARG Collections — Command Center v2.7</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  /* v2.5 — rank-movement arrows removed from monthly leaderboard.
+     v2.3 — daily table header reads "yesterday" (board reports prior day).
+     v2.2 — dept goal shown numerically ($785K of $3M · %), business-days-left
+     urgency chip, report-date labeling (data reflects prior business day).
+     v2.1 — dept bar pinned as persistent chrome; rosters auto-fit any size.
+     Three-screen rotation (Daily 3min / Monthly 3min / Flyer 1min).
+     Compatibility-hardened for LG webOS TV browsers (old Chromium):
+     no CSS grid, no flex gap, no inset; JS is ES2015-safe (no async/await,
+     no ?? / ?., no object spread). Do not "modernize" without TV re-testing.
+     PRIVACY RULE: goal dollar amounts are never present in the Sheet or on
+     screen — only collected $ and % of goal. */
+  :root {
+    --bg: #0d1117;
+    --panel: #161d26;
+    --panel-deep: #0a0e13;
+    --line: #232d3a;
+    --text: #e8ecf1;
+    --text-dim: #8a95a3;
+    --money: #35c99a;
+    --gold: #f2a72e;
+    --coral: #f0997b;
+    --blue: #6aa9f7;
+    --accent-bg: #2b2564;
+    --accent-text: #cecbf6;
+    --accent-bright: #eeedfe;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: 'Barlow', system-ui, sans-serif;
+    overflow: hidden;
+  }
+  body.hide-cursor, body.hide-cursor * { cursor: none; }
+
+  .board { height: 100vh; display: flex; flex-direction: column; padding: 2.2vh 2.4vw; }
+  .board > * + * { margin-top: 1.6vh; }
+
+  /* ---------- Header ---------- */
+  .hdr { display: flex; justify-content: space-between; align-items: baseline; }
+  .hdr-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 3.4vh;
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .hdr-title span { color: var(--money); }
+  .hdr-right { display: flex; align-items: baseline; font-size: 2vh; color: var(--text-dim); }
+  .hdr-clock {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 600; font-size: 3vh; color: var(--text);
+    font-variant-numeric: tabular-nums; margin-left: 2vw;
+  }
+  .screen-dots { display: flex; align-items: center; margin-left: 2vw; }
+  .screen-dot { width: 1.2vh; height: 1.2vh; border-radius: 50%; background: rgba(255,255,255,0.18); }
+  .screen-dot + .screen-dot { margin-left: 0.6vw; }
+  .screen-dot.active { background: var(--money); }
+
+  /* ---------- Stage / screens ---------- */
+  .stage { flex: 1; position: relative; min-height: 0; }
+  .screen { position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none; flex-direction: column; }
+  .screen.active { display: flex; }
+  .screen > * + * { margin-top: 1.6vh; }
+
+  .strip {
+    background: var(--panel); border-radius: 1.4vh;
+    padding: 1.6vh 1.8vw;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .label {
+    font-size: 1.9vh; color: var(--text-dim);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .strip-big {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 5vh; color: var(--money);
+    font-variant-numeric: tabular-nums;
+  }
+  .strip-big.pulse { animation: pulse 0.9s ease-out; }
+  @keyframes pulse {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.05); color: #7fe7c4; }
+    100% { transform: scale(1); }
+  }
+  .strip-sub { font-size: 2.1vh; color: var(--text-dim); text-align: right; }
+  .strip-sub b { color: var(--text); font-weight: 600; }
+
+  .dept-wrap { background: var(--panel); border-radius: 1.4vh; padding: 1.6vh 1.8vw; }
+  .dept-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1vh; }
+  .dept-nums {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 600; font-size: 2.9vh; font-variant-numeric: tabular-nums;
+  }
+  .dept-nums .pct { color: var(--money); margin-left: 1vw; }
+  .days-chip {
+    background: #3d2a05; color: var(--gold);
+    font-family: 'Barlow', sans-serif; font-weight: 600; font-size: 1.9vh;
+    padding: 0.5vh 1vw; border-radius: 1.6vh; margin-left: 1.4vw;
+    vertical-align: middle; white-space: nowrap;
+  }
+  .bar-track { height: 3vh; background: var(--panel-deep); border-radius: 1.5vh; overflow: hidden; }
+  .bar-fill {
+    height: 100%; width: 0%;
+    background: var(--money); border-radius: 1.5vh;
+    transition: width 1.6s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .bar-fill.over-goal { background: var(--gold); }
+
+  /* ---------- Shared table panel ---------- */
+  .tbl {
+    flex: 1; background: var(--panel); border-radius: 1.4vh;
+    padding: 1.6vh 1.6vw;
+    display: flex; flex-direction: column; min-height: 0;
+  }
+  .tbl-head { display: flex; align-items: baseline; }
+  .tbl-rows { flex: 1; display: flex; flex-direction: column; justify-content: space-around; min-height: 0; }
+  .row {
+    display: flex; align-items: center;
+    padding: 0.3vh 0; border-bottom: 1px solid var(--line);
+  }
+  .row > * + * { margin-left: 1vw; }
+  .row:last-child { border-bottom: none; }
+  .row.first { }
+  .r-rank {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 1.15em; width: 2.2vw;
+    color: var(--text-dim); text-align: center; flex-shrink: 0;
+  }
+  .row.first .r-rank { color: var(--gold); }
+  .r-name { flex: 1; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r-num { width: 7vw; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-dim); flex-shrink: 0; }
+  .r-num b { color: var(--text); font-weight: 600; }
+  .r-bar { width: 14vw; height: 1.5vh; background: var(--panel-deep); border-radius: 0.75vh; overflow: hidden; flex-shrink: 0; }
+  .r-bar div { height: 100%; background: var(--money); border-radius: 0.75vh; transition: width 1.2s ease-out; }
+  .row.first .r-bar div { background: var(--gold); }
+  .r-bar div.blue { background: var(--blue); }
+  .row.first .r-bar div.blue { background: var(--gold); }
+  .r-pct {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 600; font-size: 1.15em; width: 5.6vw;
+    text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0;
+  }
+  .r-money {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 600; font-size: 1.15em; width: 6.5vw;
+    text-align: right; font-variant-numeric: tabular-nums; flex-shrink: 0;
+  }
+
+  /* ---------- Flyer screen (in-stage; header + dept bar stay visible) ---------- */
+  .screen-flyer { align-items: center; justify-content: center; }
+  .screen-flyer img { max-width: 100%; max-height: 100%; }
+  .flyer-missing { font-size: 3vh; color: var(--text-dim); display: none; }
+
+  /* ---------- Photo screen with commemorative ribbon ---------- */
+  .screen-photo { align-items: center; }
+  .photo-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; width: 100%; }
+  .photo-frame { position: relative; height: 100%; display: flex; align-items: center; justify-content: center; }
+  .photo-frame img { max-width: 100%; max-height: 100%; border-radius: 1.4vh; }
+  .photo-ribbon {
+    position: absolute; bottom: 5%; left: 50%;
+    transform: translateX(-50%);
+    background: var(--gold);
+    color: #1a1205;
+    border-radius: 1.2vh;
+    padding: 1.2vh 2.2vw;
+    display: flex; align-items: center;
+    box-shadow: 0 0.6vh 2.4vh rgba(0,0,0,0.55);
+    white-space: nowrap;
+  }
+  .ribbon-trophy { width: 4.6vh; height: 4.6vh; flex-shrink: 0; margin-right: 1.1vw; color: #1a1205; }
+  .ribbon-label {
+    font-size: 1.8vh; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: #4a3407;
+  }
+  .ribbon-text {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 3.6vh; line-height: 1.15;
+    color: #1a1205;
+  }
+
+  /* ---------- Rotating banner ---------- */
+  .banner {
+    background: var(--accent-bg); border-radius: 1.4vh;
+    padding: 1.4vh 1.8vw;
+    display: flex; align-items: center;
+    min-height: 8vh;
+    transition: opacity 0.5s ease;
+  }
+  .banner.fade { opacity: 0; }
+  .banner-icon { width: 4.4vh; height: 4.4vh; flex-shrink: 0; color: var(--accent-text); margin-right: 1.2vw; }
+  .banner-label { font-size: 1.8vh; color: var(--accent-text); letter-spacing: 0.06em; text-transform: uppercase; }
+  .banner-text { font-family: 'Barlow Condensed', sans-serif; font-weight: 600; font-size: 3.2vh; color: var(--accent-bright); }
+  .banner-dots { margin-left: auto; display: flex; }
+  .banner-dot { width: 1.1vh; height: 1.1vh; border-radius: 50%; background: rgba(255,255,255,0.22); }
+  .banner-dot + .banner-dot { margin-left: 0.5vw; }
+  .banner-dot.active { background: var(--accent-bright); }
+
+  /* ---------- Celebration overlay ---------- */
+  .celebrate {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(13, 17, 23, 0.88);
+    display: none; align-items: center; justify-content: center;
+    flex-direction: column; z-index: 50;
+  }
+  .celebrate.show { display: flex; animation: celebIn 0.4s ease-out; }
+  @keyframes celebIn { from { opacity: 0; } to { opacity: 1; } }
+  .celebrate-title {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 9vh; color: var(--gold);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 2vh;
+  }
+  .celebrate-text { font-size: 4vh; color: var(--text); }
+
+  /* ---------- After-hours ---------- */
+  .after {
+    position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--bg);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
+    z-index: 40; padding: 4vh 6vw;
+  }
+  .after > * + * { margin-top: 3vh; }
+  body.after-hours .after { display: flex; }
+  .after-label { font-size: 2.4vh; color: var(--text-dim); letter-spacing: 0.14em; text-transform: uppercase; }
+  .after-num {
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 700; font-size: 14vh; line-height: 1;
+    color: var(--money); font-variant-numeric: tabular-nums;
+  }
+  .after-sub { font-size: 3vh; color: var(--text); }
+  .after-sub .gold { color: var(--gold); font-weight: 600; }
+  .after-bar { width: 60vw; height: 3vh; background: var(--panel-deep); border-radius: 1.5vh; overflow: hidden; }
+  .after-bar div { height: 100%; background: var(--money); border-radius: 1.5vh; }
+  .after-month { font-size: 2.4vh; color: var(--text-dim); }
+
+  .stale { color: var(--coral) !important; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .bar-fill, .r-bar div { transition: none; }
+    .strip-big.pulse { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="board">
+
+  <div class="hdr">
+    <div class="hdr-title">ARG <span>Collections</span> — <span id="month-label">—</span></div>
+    <div class="hdr-right">
+      <span id="updated-label">Updated —</span>
+      <div class="screen-dots" id="screen-dots"></div>
+      <span class="hdr-clock" id="clock">—:—</span>
+    </div>
+  </div>
+
+  <div class="dept-wrap">
+    <div class="dept-row">
+      <span class="label">Department — month to date</span>
+      <span class="dept-nums">
+        <span id="dept-collected">$0</span> of <span id="dept-goal">$0</span>
+        <span class="pct" id="dept-pct">0%</span>
+        <span class="days-chip" id="days-chip"></span>
+      </span>
+    </div>
+    <div class="bar-track"><div class="bar-fill" id="dept-bar"></div></div>
+  </div>
+
+  <div class="stage">
+
+    <!-- SCREEN 1: Daily productivity -->
+    <div class="screen" id="screen-daily">
+      <div class="strip">
+        <div>
+          <span class="label">Daily production — <span id="daily-date">—</span></span>
+          <div class="strip-big" id="daily-total">$0</div>
+        </div>
+        <div class="strip-sub" id="daily-sub">—</div>
+      </div>
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="label" style="flex:1" id="daily-tbl-label">Collector activity</span>
+          <span class="label" style="width:7vw;text-align:right" id="daily-col-worked">Worked</span>
+          <span class="label" style="width:7vw;text-align:right;margin-left:1vw">Notated</span>
+          <span class="label" style="width:14vw;text-align:center;margin-left:1vw">Collected</span>
+          <span class="label" style="width:6.5vw;text-align:right;margin-left:1vw">&nbsp;</span>
+        </div>
+        <div class="tbl-rows" id="daily-rows"></div>
+      </div>
+    </div>
+
+    <!-- SCREEN 2: Monthly leaderboard -->
+    <div class="screen" id="screen-month">
+      <div class="tbl">
+        <div class="tbl-head">
+          <span class="label" style="flex:1">Leaderboard — % of monthly goal</span>
+          <span class="label" style="width:6.5vw;text-align:right">MTD</span>
+          <span class="label" style="width:14vw;text-align:center;margin-left:1vw">Progress</span>
+          <span class="label" style="width:5.6vw;text-align:right;margin-left:1vw">&nbsp;</span>
+        </div>
+        <div class="tbl-rows" id="month-rows"></div>
+      </div>
+    </div>
+
+    <!-- SCREEN 3: Flyer (in-stage) -->
+    <div class="screen screen-flyer" id="screen-flyer">
+      <img id="flyer-img" src="flyer.png" alt="ARG recognition flyer">
+      <div class="flyer-missing" id="flyer-missing">Flyer image not found</div>
+    </div>
+
+    <!-- SCREEN 4: Photo with commemorative ribbon overlay -->
+    <div class="screen screen-photo" id="screen-photo">
+      <div class="photo-wrap">
+        <div class="photo-frame">
+          <img id="photo-img" src="basketball.jpg" alt="ARG team photo">
+          <div class="photo-ribbon">
+            <svg class="ribbon-trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0V4zM7 6H4a2 2 0 0 0 2 4h1M17 6h3a2 2 0 0 1-2 4h-1"/>
+            </svg>
+            <div>
+              <div class="ribbon-label" id="photo-label">—</div>
+              <div class="ribbon-text" id="photo-text">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="banner" id="banner">
+    <svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M8 21h8M12 17v4M7 4h10v6a5 5 0 0 1-10 0V4zM7 6H4a2 2 0 0 0 2 4h1M17 6h3a2 2 0 0 1-2 4h-1"/>
+    </svg>
+    <div>
+      <div class="banner-label" id="banner-label">—</div>
+      <div class="banner-text" id="banner-text">—</div>
+    </div>
+    <div class="banner-dots" id="banner-dots"></div>
+  </div>
+
+</div>
+
+<div class="celebrate" id="celebrate">
+  <div class="celebrate-title" id="celebrate-title">New largest payment</div>
+  <div class="celebrate-text" id="celebrate-text"></div>
+</div>
+
+<div class="after">
+  <div class="after-label">Final score — <span id="after-date">today</span></div>
+  <div class="after-num" id="after-num">$0</div>
+  <div class="after-sub" id="after-sub">—</div>
+  <div class="after-bar"><div id="after-bar"></div></div>
+  <div class="after-month" id="after-month">—</div>
+</div>
+
+<script>
+/* =====================================================================
+   ARG COLLECTIONS TV DASHBOARD — v2.0 three-screen rotation
+   ---------------------------------------------------------------------
+   SCREENS (durations in CONFIG.SCREENS):
+     1. daily  (180s) — per-collector daily productivity
+     2. month  (180s) — MTD collected + % of monthly goal
+     3. flyer  (60s)  — full-screen recognition flyer (flyer.png in repo)
+
+   PRIVACY: goal dollar amounts never appear in the Sheet or on screen.
+   The Sheet carries precomputed % only.
+
+   SHEET LAYOUT v2:
+   Tab "State" — key/value:
+     monthLabel, deptCollected, deptPct, dailyDate, dailyCollected,
+     dailySub, flyerUrl, banner1Label, banner1Text, ... up to banner5
+   Tab "Collectors" — header, then: Name | MTD | Pct
+   Tab "Daily"      — header, then: Name | Accts | Notated | Collected
+   ===================================================================== */
+
+var CONFIG = {
+  SHEET_ID: "1sX18ElkLPPU75cRRc88QOcHA1DTsQVzzvbUMMQXkhx4",
+  REFRESH_SECONDS: 60,
+  SCREENS: [
+    { key: "daily", seconds: 180 },
+    { key: "month", seconds: 180 },
+    { key: "flyer", seconds: 60 },
+    { key: "photo", seconds: 60 }
+  ],
+  BANNER_ROTATE_SECONDS: 15,
+  STALE_AFTER_MINUTES: 30,
+  NIGHTLY_RELOAD_HOUR: 4,
+  AFTER_HOURS: { enabled: true, startHour: 8, endHour: 18.5 },
+  CELEBRATION_SECONDS: 8,
+  HIDE_CURSOR_AFTER_SECONDS: 5
+};
+
+var SAMPLE_DATA = {
+  monthLabel: "July 2026 — thru 7/14",
+  deptCollected: 785495,
+  deptGoal: 3000000,
+  deptPct: 26.18,
+  dailyDate: "Tuesday, July 14",
+  dailyCollected: 36344.96,
+  dailySub: "647 accounts worked \u00b7 774 notated",
+  flyerUrl: "flyer.png",
+  photoUrl: "basketball.jpg",
+  photoLabel: "2026 Annual Basketball Game",
+  photoText: "Champions — the ARG Legal Team",
+  banners: [
+    { label: "10-Day Blitz winner", text: "Ginelle R. — 81.1% of monthly goal by day 10" },
+    { label: "Top daily collector — 7/14", text: "Charles M. — $11,494 collected" },
+    { label: "Floor total — 7/14", text: "647 accounts worked \u00b7 $36,345 collected" }
+  ],
+  collectors: [
+    { name: "Ginelle R.", mtd: 87479,  pct: 87.48 },
+    { name: "Ray L.",     mtd: 28307,  pct: 47.18 },
+    { name: "Curt A.",    mtd: 23706,  pct: 39.51 },
+    { name: "Charles M.", mtd: 117386, pct: 35.57 },
+    { name: "Robert D.",  mtd: 90549,  pct: 29.21 },
+    { name: "Ekrem H.",   mtd: 281902, pct: 27.91 },
+    { name: "Gabe T.",    mtd: 38777,  pct: 21.54 },
+    { name: "Jamal G.",   mtd: 49385,  pct: 21.47 },
+    { name: "Anthony P.", mtd: 27363,  pct: 15.20 },
+    { name: "Ramone W.",  mtd: 15557,  pct: 11.97 },
+    { name: "Jefrey P.",  mtd: 25084,  pct: 11.40 }
+  ],
+  daily: [
+    { name: "Charles M.", accts: 104, notated: 57,  collected: 11494.22 },
+    { name: "Ekrem H.",   accts: 130, notated: 145, collected: 7550.00 },
+    { name: "Jamal G.",   accts: 70,  notated: 73,  collected: 6909.25 },
+    { name: "Anthony P.", accts: 40,  notated: 61,  collected: 2218.50 },
+    { name: "Gabe T.",    accts: 45,  notated: 51,  collected: 2200.00 },
+    { name: "Curt A.",    accts: 32,  notated: 58,  collected: 1127.99 },
+    { name: "Ginelle R.", accts: 44,  notated: 70,  collected: 1100.00 },
+    { name: "Jefrey P.",  accts: 40,  notated: 50,  collected: 1100.00 },
+    { name: "Ramone W.",  accts: 20,  notated: 62,  collected: 1100.00 },
+    { name: "Ray L.",     accts: 50,  notated: 90,  collected: 925.00 },
+    { name: "Robert D.",  accts: 72,  notated: 57,  collected: 620.00 }
+  ]
+};
+
+/* ---------- helpers ---------- */
+function money(n) { return "$" + Math.round(n).toLocaleString("en-US"); }
+function moneyCompact(n) {
+  if (n >= 1000000) {
+    var m = n / 1000000;
+    return "$" + (m % 1 === 0 ? m.toFixed(0) : m.toFixed(1)) + "M";
+  }
+  if (n >= 1000) return "$" + Math.round(n / 1000) + "K";
+  return money(n);
+}
+function businessDaysLeft() {
+  var now = new Date();
+  var end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  var d = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  var count = 0;
+  while (d <= end) {
+    var w = d.getDay();
+    if (w > 0 && w < 6) count++;
+    d.setDate(d.getDate() + 1);
+  }
+  return count;
+}
+function renderDaysChip() {
+  var n = businessDaysLeft();
+  el("days-chip").textContent = n + " business day" + (n === 1 ? "" : "s") + " left";
+}
+function el(id) { return document.getElementById(id); }
+
+/* ---------- state ---------- */
+var lastData = null;
+var lastUpdated = null;
+var bannerIndex = 0;
+var screenIndex = 0;
+var screenTimer = null;
+var prev = { daily: null, banner1: null };
+
+/* ---------- screen rotation ---------- */
+function showScreen(idx) {
+  screenIndex = idx % CONFIG.SCREENS.length;
+  var key = CONFIG.SCREENS[screenIndex].key;
+  el("screen-daily").classList.toggle("active", key === "daily");
+  el("screen-month").classList.toggle("active", key === "month");
+  el("screen-flyer").classList.toggle("active", key === "flyer");
+  el("screen-photo").classList.toggle("active", key === "photo");
+  var dots = "";
+  for (var i = 0; i < CONFIG.SCREENS.length; i++) {
+    dots += '<div class="screen-dot ' + (i === screenIndex ? "active" : "") + '"></div>';
+  }
+  el("screen-dots").innerHTML = dots;
+}
+
+function nextScreen() {
+  showScreen(screenIndex + 1);
+  armScreenTimer();
+}
+
+function armScreenTimer() {
+  if (screenTimer) clearTimeout(screenTimer);
+  screenTimer = setTimeout(nextScreen, CONFIG.SCREENS[screenIndex].seconds * 1000);
+}
+
+/* ---------- render ---------- */
+function render(data) {
+  lastData = data;
+
+  el("month-label").textContent = data.monthLabel;
+
+  /* Screen 1 — daily */
+  el("daily-date").textContent = data.dailyDate;
+  el("daily-tbl-label").textContent = "Collector activity — " + data.dailyDate;
+  var dt = el("daily-total");
+  dt.textContent = money(data.dailyCollected);
+  if (prev.daily !== null && data.dailyCollected > prev.daily) {
+    dt.classList.remove("pulse"); void dt.offsetWidth; dt.classList.add("pulse");
+  }
+  prev.daily = data.dailyCollected;
+  el("daily-sub").innerHTML = data.dailySub || "";
+
+  var dailySorted = data.daily.slice().sort(function (a, b) { return b.collected - a.collected; });
+  el("daily-rows").style.fontSize = Math.min(2.3, 28 / Math.max(dailySorted.length, 1)) + "vh";
+  var hasWorked = false;
+  for (var di = 0; di < dailySorted.length; di++) { if (dailySorted[di].accts > 0) { hasWorked = true; break; } }
+  el("daily-col-worked").style.display = hasWorked ? "" : "none";
+  var maxDaily = dailySorted.length ? dailySorted[0].collected : 1;
+  el("daily-rows").innerHTML = dailySorted.map(function (c, i) {
+    var w = maxDaily > 0 ? Math.round((c.collected / maxDaily) * 100) : 0;
+    return '<div class="row ' + (i === 0 ? "first" : "") + '">'
+      + '<span class="r-rank">' + (i + 1) + '</span>'
+      + '<span class="r-name">' + c.name + '</span>'
+      + (hasWorked ? '<span class="r-num">' + c.accts + '</span>' : '')
+      + '<span class="r-num">' + c.notated + '</span>'
+      + '<div class="r-bar"><div class="blue" style="width:' + w + '%"></div></div>'
+      + '<span class="r-money">' + money(c.collected) + '</span>'
+      + '</div>';
+  }).join("");
+
+  /* Screen 2 — monthly */
+  el("dept-collected").textContent = moneyCompact(data.deptCollected);
+  el("dept-goal").textContent = data.deptGoal ? moneyCompact(data.deptGoal) : "\u2014";
+  el("dept-pct").textContent = Math.round(data.deptPct) + "% of goal";
+  renderDaysChip();
+  var bar = el("dept-bar");
+  bar.style.width = Math.min(data.deptPct, 100) + "%";
+  bar.classList.toggle("over-goal", data.deptPct >= 100);
+
+  var monthSorted = data.collectors.slice().sort(function (a, b) { return b.pct - a.pct; });
+  el("month-rows").style.fontSize = Math.min(2.3, 28 / Math.max(monthSorted.length, 1)) + "vh";
+  el("month-rows").innerHTML = monthSorted.map(function (c, i) {
+    return '<div class="row ' + (i === 0 ? "first" : "") + '">'
+      + '<span class="r-rank">' + (i + 1) + '</span>'
+      + '<span class="r-name">' + c.name + '</span>'
+      + '<span class="r-money">' + money(c.mtd) + '</span>'
+      + '<div class="r-bar"><div style="width:' + Math.min(c.pct, 100) + '%"></div></div>'
+      + '<span class="r-pct">' + c.pct.toFixed(1) + '%</span>'
+      + '</div>';
+  }).join("");
+
+  /* Screen 3 — flyer */
+  if (data.flyerUrl) el("flyer-img").src = data.flyerUrl;
+
+  /* Screen 4 — photo */
+  if (data.photoUrl) el("photo-img").src = data.photoUrl;
+  el("photo-label").textContent = data.photoLabel || "";
+  el("photo-text").textContent = data.photoText || "";
+
+  /* Celebration when banner1 changes between refreshes */
+  var b1 = data.banners && data.banners[0] ? data.banners[0].text : null;
+  if (prev.banner1 !== null && b1 && b1 !== prev.banner1) {
+    celebrate(data.banners[0].label, b1);
+  }
+  prev.banner1 = b1;
+
+  renderBanner();
+  renderAfterHours();
+  markUpdated();
+}
+
+el("flyer-img").onerror = function () {
+  this.style.display = "none";
+  el("flyer-missing").style.display = "block";
+};
+
+/* ---------- rotating banner ---------- */
+function renderBanner() {
+  var banners = (lastData && lastData.banners) || [];
+  if (!banners.length) return;
+  bannerIndex = bannerIndex % banners.length;
+  var b = banners[bannerIndex];
+  el("banner-label").textContent = b.label;
+  el("banner-text").textContent = b.text;
+  el("banner-dots").innerHTML = banners.map(function (_, i) {
+    return '<div class="banner-dot ' + (i === bannerIndex ? "active" : "") + '"></div>';
+  }).join("");
+}
+
+setInterval(function () {
+  var banners = (lastData && lastData.banners) || [];
+  if (banners.length < 2) return;
+  var b = el("banner");
+  b.classList.add("fade");
+  setTimeout(function () { bannerIndex++; renderBanner(); b.classList.remove("fade"); }, 500);
+}, CONFIG.BANNER_ROTATE_SECONDS * 1000);
+
+/* ---------- celebration ---------- */
+function celebrate(title, text) {
+  el("celebrate-title").textContent = title;
+  el("celebrate-text").textContent = text;
+  var c = el("celebrate");
+  c.classList.add("show");
+  setTimeout(function () { c.classList.remove("show"); }, CONFIG.CELEBRATION_SECONDS * 1000);
+}
+
+/* ---------- after-hours ---------- */
+function isAfterHours() {
+  if (!CONFIG.AFTER_HOURS.enabled) return false;
+  var now = new Date();
+  var h = now.getHours() + now.getMinutes() / 60;
+  return h < CONFIG.AFTER_HOURS.startHour || h >= CONFIG.AFTER_HOURS.endHour;
+}
+
+function renderAfterHours() {
+  var on = isAfterHours();
+  document.body.classList.toggle("after-hours", on);
+  if (!on || !lastData) return;
+  var d = lastData;
+  el("after-date").textContent = d.dailyDate || "today";
+  el("after-num").textContent = money(d.dailyCollected);
+  var sorted = d.collectors.slice().sort(function (a, b) { return b.pct - a.pct; });
+  var top = sorted[0];
+  el("after-sub").innerHTML = top
+    ? 'Month leader: <span class="gold">' + top.name + '</span> \u00b7 ' + top.pct.toFixed(1) + '% of goal'
+    : "";
+  el("after-bar").style.width = Math.min(d.deptPct, 100) + "%";
+  el("after-month").textContent =
+    d.monthLabel + ": " + moneyCompact(d.deptCollected)
+    + (d.deptGoal ? " of " + moneyCompact(d.deptGoal) : "")
+    + " \u2014 " + Math.round(d.deptPct) + "% of goal";
+}
+
+setInterval(renderAfterHours, 60 * 1000);
+setInterval(renderDaysChip, 60 * 60 * 1000);
+
+/* ---------- clock, staleness, nightly reload, cursor ---------- */
+function tickClock() {
+  var now = new Date();
+  el("clock").textContent = now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  var upd = el("updated-label");
+  if (lastUpdated) {
+    var mins = Math.floor((now - lastUpdated) / 60000);
+    upd.textContent = mins < 1 ? "Updated just now" : "Updated " + mins + " min ago";
+    upd.classList.toggle("stale", mins >= CONFIG.STALE_AFTER_MINUTES);
+  }
+}
+setInterval(tickClock, 5000);
+function markUpdated() { lastUpdated = new Date(); tickClock(); }
+
+function scheduleNightlyReload() {
+  var now = new Date();
+  var next = new Date(now);
+  next.setHours(CONFIG.NIGHTLY_RELOAD_HOUR, 0, 0, 0);
+  if (next <= now) next.setDate(next.getDate() + 1);
+  setTimeout(function () { location.reload(); }, next - now);
+}
+
+var cursorTimer = null;
+function armCursorHide() {
+  document.body.classList.remove("hide-cursor");
+  if (cursorTimer) clearTimeout(cursorTimer);
+  cursorTimer = setTimeout(function () { document.body.classList.add("hide-cursor"); }, CONFIG.HIDE_CURSOR_AFTER_SECONDS * 1000);
+}
+document.addEventListener("mousemove", armCursorHide);
+armCursorHide();
+
+/* ---------- Google Sheet loader (gviz JSON endpoint) ---------- */
+function fetchSheetTab(tabName) {
+  var url = "https://docs.google.com/spreadsheets/d/" + CONFIG.SHEET_ID
+    + "/gviz/tq?tqx=out:json&sheet=" + encodeURIComponent(tabName);
+  return fetch(url).then(function (res) { return res.text(); }).then(function (text) {
+    var json = JSON.parse(text.substring(text.indexOf("(") + 1, text.lastIndexOf(")")));
+    if (!json.table || !json.table.rows) throw new Error("Tab '" + tabName + "' returned no table");
+    return json.table.rows.map(function (r) {
+      return (r.c || []).map(function (c) { return (c && c.v !== null && c.v !== undefined) ? c.v : ""; });
+    });
+  });
+}
+
+function loadFromSheet() {
+  return Promise.all([fetchSheetTab("State"), fetchSheetTab("Collectors"), fetchSheetTab("Daily")])
+    .then(function (results) {
+      var kv = {};
+      results[0].forEach(function (r) { if (r[0]) kv[String(r[0]).trim()] = r[1]; });
+
+      var banners = [];
+      for (var i = 1; i <= 5; i++) {
+        if (kv["banner" + i + "Label"] && kv["banner" + i + "Text"]) {
+          banners.push({ label: String(kv["banner" + i + "Label"]), text: String(kv["banner" + i + "Text"]) });
+        }
+      }
+
+      var collectors = results[1]
+        .filter(function (r) { return r[0] && !isNaN(Number(r[1])) && String(r[0]).trim() !== "Name"; })
+        .map(function (r) {
+          return { name: String(r[0]), mtd: Number(r[1]), pct: Number(r[2]) || 0 };
+        });
+
+      var daily = results[2]
+        .filter(function (r) { return r[0] && !isNaN(Number(r[3])) && String(r[0]).trim() !== "Name"; })
+        .map(function (r) {
+          return { name: String(r[0]), accts: Number(r[1]) || 0, notated: Number(r[2]) || 0, collected: Number(r[3]) };
+        });
+
+      return {
+        monthLabel: String(kv.monthLabel || ""),
+        deptCollected: Number(kv.deptCollected) || 0,
+        deptGoal: Number(kv.deptGoal) || 0,
+        deptPct: Number(kv.deptPct) || 0,
+        dailyDate: String(kv.dailyDate || ""),
+        dailyCollected: Number(kv.dailyCollected) || 0,
+        dailySub: String(kv.dailySub || ""),
+        flyerUrl: String(kv.flyerUrl || "flyer.png"),
+        photoUrl: String(kv.photoUrl || "basketball.jpg"),
+        photoLabel: String(kv.photoLabel || ""),
+        photoText: String(kv.photoText || ""),
+        banners: banners.length ? banners : [{ label: "ARG Collections", text: "Let's get it." }],
+        collectors: collectors,
+        daily: daily
+      };
+    });
+}
+
+function refresh() {
+  var p = CONFIG.SHEET_ID ? loadFromSheet() : Promise.resolve(SAMPLE_DATA);
+  p.then(render).catch(function (err) { console.error("Dashboard refresh failed:", err); });
+}
+
+/* ---------- boot ---------- */
+showScreen(0);
+armScreenTimer();
+refresh();
+tickClock();
+scheduleNightlyReload();
+if (CONFIG.SHEET_ID) setInterval(refresh, CONFIG.REFRESH_SECONDS * 1000);
+</script>
+
+</body>
+</html>
